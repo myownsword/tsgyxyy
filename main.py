@@ -8,7 +8,7 @@ from typing import Optional
 import os
 
 from database import engine, get_db, Base
-from models import Room, Booking, BookingLog, ClosedPeriod
+from models import Room, Booking, BookingLog, ClosedPeriod, WaitlistEntry, WaitlistFillLog
 
 Base.metadata.create_all(bind=engine)
 
@@ -110,6 +110,129 @@ def get_user_daily_minutes(db: Session, user_id: str, date_str: str) -> int:
         delta = b.end_time - b.start_time
         total += int(delta.total_seconds() / 60)
     return total
+
+
+def get_waitlist_position(db: Session, entry: WaitlistEntry) -> int:
+    return db.query(WaitlistEntry).filter(
+        WaitlistEntry.room_id == entry.room_id,
+        WaitlistEntry.status == "waiting",
+        WaitlistEntry.start_time == entry.start_time,
+        WaitlistEntry.end_time == entry.end_time,
+        WaitlistEntry.created_at <= entry.created_at,
+    ).count()
+
+
+def validate_waitlist_entry(db: Session, user_id: str, room_id: int, start_time: datetime, end_time: datetime, selected_date: str) -> Optional[str]:
+    room = db.query(Room).filter(Room.id == room_id, Room.is_active == True).first()
+    if not room:
+        return "房间不存在或未开放"
+
+    if not check_closed_periods(selected_date, start_time, end_time, db):
+        return "所选时段与闭馆时段冲突"
+
+    cross_booking = check_user_time_cross(db, user_id, start_time, end_time)
+    if cross_booking:
+        cb_start = cross_booking.start_time.strftime("%H:%M")
+        cb_end = cross_booking.end_time.strftime("%H:%M")
+        return f"您在同日存在时间交叉的预约（{cross_booking.room.name} {cb_start}-{cb_end}），与拟候补时段交叉"
+
+    duration_minutes = int((end_time - start_time).total_seconds() / 60)
+    current_minutes = get_user_daily_minutes(db, user_id, selected_date)
+    if current_minutes + duration_minutes > MAX_DAILY_MINUTES:
+        return f"单人每日总时长限制为 {MAX_DAILY_MINUTES} 分钟，当前已用 {current_minutes} 分钟，加入候补后将超出限额"
+
+    now = datetime.now()
+    if start_time < now:
+        return "不能候补过去的时间"
+
+    return None
+
+
+def try_auto_fill(db: Session, room_id: int):
+    entries = db.query(WaitlistEntry).filter(
+        WaitlistEntry.room_id == room_id,
+        WaitlistEntry.status == "waiting",
+    ).order_by(WaitlistEntry.created_at).all()
+
+    for entry in entries:
+        date_str = entry.start_time.strftime("%Y-%m-%d")
+        start_time = entry.start_time
+        end_time = entry.end_time
+
+        fail_reason = None
+
+        room = db.query(Room).filter(Room.id == room_id, Room.is_active == True).first()
+        if not room:
+            fail_reason = "房间不存在或未开放"
+
+        if not fail_reason and not check_closed_periods(date_str, start_time, end_time, db):
+            fail_reason = "所选时段与闭馆时段冲突"
+
+        if not fail_reason and not check_room_capacity(db, room_id, start_time, end_time):
+            fail_reason = "房间容量已满"
+
+        if not fail_reason:
+            cross_booking = check_user_time_cross(db, entry.user_id, start_time, end_time)
+            if cross_booking:
+                cb_start = cross_booking.start_time.strftime("%H:%M")
+                cb_end = cross_booking.end_time.strftime("%H:%M")
+                fail_reason = f"本人时间冲突（{cross_booking.room.name} {cb_start}-{cb_end}）"
+
+        if not fail_reason:
+            duration_minutes = int((end_time - start_time).total_seconds() / 60)
+            current_minutes = get_user_daily_minutes(db, entry.user_id, date_str)
+            if current_minutes + duration_minutes > MAX_DAILY_MINUTES:
+                fail_reason = f"超出每日时长限额（已用 {current_minutes} 分钟，需 {duration_minutes} 分钟）"
+
+        if not fail_reason:
+            now = datetime.now()
+            if start_time < now:
+                fail_reason = "候补时段已过期"
+
+        if fail_reason:
+            fill_log = WaitlistFillLog(
+                waitlist_id=entry.id,
+                room_id=room_id,
+                user_id=entry.user_id,
+                user_name=entry.user_name,
+                start_time=start_time,
+                end_time=end_time,
+                success=False,
+                reason=fail_reason,
+            )
+            db.add(fill_log)
+            db.commit()
+            continue
+
+        booking = Booking(
+            room_id=room_id,
+            user_id=entry.user_id,
+            user_name=entry.user_name,
+            start_time=start_time,
+            end_time=end_time,
+            status="active",
+        )
+        db.add(booking)
+        db.commit()
+        db.refresh(booking)
+
+        entry.status = "filled"
+        db.commit()
+
+        add_log(db, booking.id, "auto_filled", f"候补自动补位成功：用户{entry.user_name}({entry.user_id})补入房间{room.name}，时段：{start_time}-{end_time}")
+
+        fill_log = WaitlistFillLog(
+            waitlist_id=entry.id,
+            room_id=room_id,
+            user_id=entry.user_id,
+            user_name=entry.user_name,
+            start_time=start_time,
+            end_time=end_time,
+            success=True,
+            booking_id=booking.id,
+        )
+        db.add(fill_log)
+        db.commit()
 
 
 def seed_initial_data(db: Session):
@@ -391,10 +514,23 @@ async def history(
         Booking.user_id == user_id
     ).order_by(BookingLog.timestamp.desc()).all()
 
+    waitlist_entries_raw = db.query(WaitlistEntry).filter(
+        WaitlistEntry.user_id == user_id,
+    ).order_by(WaitlistEntry.created_at.desc()).all()
+
+    waitlist_entries = []
+    for entry in waitlist_entries_raw:
+        pos = get_waitlist_position(db, entry) if entry.status == "waiting" else None
+        waitlist_entries.append({
+            "entry": entry,
+            "position": pos,
+        })
+
     return templates.TemplateResponse("history.html", {
         "request": request,
         "bookings": bookings,
         "logs": logs,
+        "waitlist_entries": waitlist_entries,
         "user_id": user_id,
         "user_name": user_name
     })
@@ -421,6 +557,8 @@ async def cancel_booking(
     db.commit()
 
     add_log(db, booking.id, "cancelled", f"用户{user_name}({user_id})取消了预约")
+
+    try_auto_fill(db, booking.room_id)
 
     return RedirectResponse(
         url=f"/history?user_id={user_id}&user_name={user_name}",
@@ -493,6 +631,9 @@ async def update_room_capacity(
         raise HTTPException(status_code=404, detail="房间不存在")
     room.capacity = capacity
     db.commit()
+
+    try_auto_fill(db, room_id)
+
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -526,8 +667,18 @@ async def delete_closed_period(cp_id: int, db: Session = Depends(get_db)):
     cp = db.query(ClosedPeriod).filter(ClosedPeriod.id == cp_id).first()
     if not cp:
         raise HTTPException(status_code=404, detail="闭馆时段不存在")
+
+    room_ids = db.query(WaitlistEntry.room_id).filter(
+        WaitlistEntry.status == "waiting"
+    ).distinct().all()
+    affected_room_ids = [r[0] for r in room_ids]
+
     db.delete(cp)
     db.commit()
+
+    for rid in affected_room_ids:
+        try_auto_fill(db, rid)
+
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -542,6 +693,9 @@ async def mark_no_show(booking_id: int, db: Session = Depends(get_db)):
     booking.status = "no_show"
     db.commit()
     add_log(db, booking.id, "no_show", "管理员标记为爽约/未到")
+
+    try_auto_fill(db, booking.room_id)
+
     return RedirectResponse(url="/admin", status_code=status.HTTP_303_SEE_OTHER)
 
 
@@ -623,3 +777,208 @@ async def get_all_logs(
             "timestamp": log.timestamp.isoformat() if log.timestamp else None
         })
     return JSONResponse({"logs": result})
+
+
+@app.post("/waitlist/join")
+async def join_waitlist(
+    user_id: str = Form(...),
+    user_name: str = Form(...),
+    room_id: int = Form(...),
+    selected_date: str = Form(...),
+    start_hour: str = Form(...),
+    duration_minutes: int = Form(...),
+    db: Session = Depends(get_db)
+):
+    if duration_minutes < MIN_BOOKING_MINUTES or duration_minutes > MAX_BOOKING_MINUTES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"候补时长必须在 {MIN_BOOKING_MINUTES}-{MAX_BOOKING_MINUTES} 分钟之间"
+        )
+
+    if duration_minutes % 30 != 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="候补时长必须是 30 分钟的整数倍"
+        )
+
+    start_time = datetime.strptime(f"{selected_date} {start_hour}", "%Y-%m-%d %H:%M")
+    end_time = start_time + timedelta(minutes=duration_minutes)
+
+    now = datetime.now()
+    if start_time < now:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="不能候补过去的时间"
+        )
+
+    day_start = datetime.strptime(f"{selected_date} 08:00", "%Y-%m-%d %H:%M")
+    day_end = datetime.strptime(f"{selected_date} 22:00", "%Y-%m-%d %H:%M")
+    if start_time < day_start or end_time > day_end:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="候补时间必须在 08:00-22:00 之间"
+        )
+
+    validation_error = validate_waitlist_entry(db, user_id, room_id, start_time, end_time, selected_date)
+    if validation_error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=validation_error
+        )
+
+    duplicate = db.query(WaitlistEntry).filter(
+        WaitlistEntry.room_id == room_id,
+        WaitlistEntry.user_id == user_id,
+        WaitlistEntry.start_time == start_time,
+        WaitlistEntry.end_time == end_time,
+        WaitlistEntry.status == "waiting",
+    ).first()
+    if duplicate:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="您已在该时段的候补队列中"
+        )
+
+    entry = WaitlistEntry(
+        room_id=room_id,
+        user_id=user_id,
+        user_name=user_name,
+        start_time=start_time,
+        end_time=end_time,
+        status="waiting",
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+
+    position = get_waitlist_position(db, entry)
+
+    return RedirectResponse(
+        url=f"/history?user_id={user_id}&user_name={user_name}&waitlist_msg=已加入候补，排队位置：第{position}位",
+        status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.post("/waitlist/cancel/{entry_id}")
+async def cancel_waitlist(
+    entry_id: int,
+    user_id: str = Form(...),
+    user_name: str = Form(...),
+    db: Session = Depends(get_db)
+):
+    entry = db.query(WaitlistEntry).filter(WaitlistEntry.id == entry_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="候补记录不存在")
+
+    if entry.user_id != user_id:
+        raise HTTPException(status_code=403, detail="只能取消自己的候补")
+
+    if entry.status != "waiting":
+        raise HTTPException(status_code=400, detail="该候补已处理（已补位/已取消/已过期）")
+
+    entry.status = "cancelled"
+    db.commit()
+
+    return RedirectResponse(
+        url=f"/history?user_id={user_id}&user_name={user_name}&waitlist_msg=候补已取消",
+        status_code=status.HTTP_303_SEE_OTHER
+    )
+
+
+@app.get("/waitlist/my", response_class=HTMLResponse)
+async def my_waitlist(
+    request: Request,
+    user_id: str = "reader1",
+    user_name: str = "读者1",
+    db: Session = Depends(get_db)
+):
+    entries = db.query(WaitlistEntry).filter(
+        WaitlistEntry.user_id == user_id,
+    ).order_by(WaitlistEntry.created_at.desc()).all()
+
+    result = []
+    for entry in entries:
+        pos = get_waitlist_position(db, entry) if entry.status == "waiting" else None
+        result.append({
+            "entry": entry,
+            "position": pos,
+        })
+
+    return templates.TemplateResponse("history.html", {
+        "request": request,
+        "waitlist_entries": result,
+        "user_id": user_id,
+        "user_name": user_name,
+        "show_waitlist_tab": True,
+    })
+
+
+@app.get("/admin/waitlist", response_class=HTMLResponse)
+async def admin_waitlist(
+    request: Request,
+    room_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    rooms = db.query(Room).order_by(Room.id).all()
+
+    query = db.query(WaitlistEntry).filter(WaitlistEntry.status == "waiting")
+    if room_id:
+        query = query.filter(WaitlistEntry.room_id == room_id)
+    entries = query.order_by(WaitlistEntry.room_id, WaitlistEntry.start_time, WaitlistEntry.created_at).all()
+
+    result = []
+    for entry in entries:
+        pos = get_waitlist_position(db, entry)
+        result.append({
+            "entry": entry,
+            "position": pos,
+        })
+
+    return templates.TemplateResponse("admin.html", {
+        "request": request,
+        "rooms": rooms,
+        "waitlist_entries": result,
+        "filter_room_id": room_id,
+        "show_waitlist_tab": True,
+        "today": date.today().strftime("%Y-%m-%d"),
+    })
+
+
+@app.get("/admin/fill-logs", response_class=HTMLResponse)
+async def admin_fill_logs(
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    logs = db.query(WaitlistFillLog).order_by(WaitlistFillLog.created_at.desc()).limit(200).all()
+
+    return templates.TemplateResponse("admin.html", {
+        "request": request,
+        "fill_logs": logs,
+        "show_fill_logs_tab": True,
+        "today": date.today().strftime("%Y-%m-%d"),
+    })
+
+
+@app.get("/api/waitlist/{room_id}")
+async def get_waitlist_api(
+    room_id: int,
+    db: Session = Depends(get_db)
+):
+    entries = db.query(WaitlistEntry).filter(
+        WaitlistEntry.room_id == room_id,
+        WaitlistEntry.status == "waiting",
+    ).order_by(WaitlistEntry.created_at).all()
+
+    result = []
+    for entry in entries:
+        pos = get_waitlist_position(db, entry)
+        result.append({
+            "id": entry.id,
+            "user_id": entry.user_id,
+            "user_name": entry.user_name,
+            "start_time": entry.start_time.isoformat(),
+            "end_time": entry.end_time.isoformat(),
+            "position": pos,
+            "created_at": entry.created_at.isoformat() if entry.created_at else None,
+        })
+    return JSONResponse({"waitlist": result})

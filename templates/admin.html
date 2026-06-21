@@ -24,6 +24,125 @@
         <h1>🔧 管理后台</h1>
         <p class="muted">今日日期：<strong>{{ today }}</strong></p>
 
+        {% if show_waitlist_tab %}
+        <section>
+            <h2>📋 候补队列</h2>
+            <form method="get" action="/admin/waitlist" class="form-inline" style="margin-bottom:1rem;">
+                <div>
+                    <label for="filter_room">按房间筛选</label>
+                    <select id="filter_room" name="room_id" onchange="this.form.submit()">
+                        <option value="">全部房间</option>
+                        {% for room in rooms %}
+                        <option value="{{ room.id }}" {% if filter_room_id and filter_room_id == room.id %}selected{% endif %}>
+                            {{ room.name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </form>
+
+            {% if waitlist_entries %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>编号</th>
+                            <th>房间</th>
+                            <th>候补人</th>
+                            <th>日期</th>
+                            <th>候补时段</th>
+                            <th>时长</th>
+                            <th>排队位置</th>
+                            <th>加入时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for we in waitlist_entries %}
+                        {% set entry = we.entry %}
+                        <tr>
+                            <td>#{{ entry.id }}</td>
+                            <td><strong>{{ entry.room.name }}</strong></td>
+                            <td>{{ entry.user_name }} ({{ entry.user_id }})</td>
+                            <td>{{ entry.start_time.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ entry.start_time.strftime('%H:%M') }} - {{ entry.end_time.strftime('%H:%M') }}</td>
+                            <td>
+                                {% set delta = (entry.end_time - entry.start_time).total_seconds() / 60 %}
+                                {{ '%d' | format(delta) }} 分钟
+                            </td>
+                            <td><strong class="position-num">第 {{ we.position }} 位</strong></td>
+                            <td class="small muted">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">当前无等待中的候补</p>
+            </div>
+            {% endif %}
+
+            <div class="quick-links" style="margin-top:1rem;">
+                <a href="/admin" role="button" class="secondary">返回管理后台</a>
+                <a href="/admin/fill-logs" role="button" class="secondary">查看补位日志</a>
+            </div>
+        </section>
+        {% elif show_fill_logs_tab %}
+        <section>
+            <h2>📝 补位日志</h2>
+            {% if fill_logs %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>候补编号</th>
+                            <th>房间ID</th>
+                            <th>用户</th>
+                            <th>时段</th>
+                            <th>结果</th>
+                            <th>原因/预约编号</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for fl in fill_logs %}
+                        <tr>
+                            <td class="small">{{ fl.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                            <td>#{{ fl.waitlist_id }}</td>
+                            <td>{{ fl.room_id }}</td>
+                            <td>{{ fl.user_name }} ({{ fl.user_id }})</td>
+                            <td class="small">{{ fl.start_time.strftime('%Y-%m-%d %H:%M') }} - {{ fl.end_time.strftime('%H:%M') }}</td>
+                            <td>
+                                {% if fl.success %}
+                                    <span class="badge badge-success">成功</span>
+                                {% else %}
+                                    <span class="badge badge-cancel">跳过</span>
+                                {% endif %}
+                            </td>
+                            <td class="small">
+                                {% if fl.success %}
+                                    预约 #{{ fl.booking_id }}
+                                {% else %}
+                                    {{ fl.reason }}
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">暂无补位日志</p>
+            </div>
+            {% endif %}
+
+            <div class="quick-links" style="margin-top:1rem;">
+                <a href="/admin" role="button" class="secondary">返回管理后台</a>
+                <a href="/admin/waitlist" role="button" class="secondary">查看候补队列</a>
+            </div>
+        </section>
+        {% else %}
         <section>
             <h2>🏢 房间管理</h2>
             <div class="table-container">
@@ -132,7 +251,7 @@
             </details>
 
             <div class="tip-box">
-                <p>💡 <strong>提示：</strong>添加或删除闭馆时段后，读者在刷新预约页面时会立即看到更新的时段可用性（可用/闭馆状态）。</p>
+                <p>💡 <strong>提示：</strong>添加或删除闭馆时段后，读者在刷新预约页面时会立即看到更新的时段可用性（可用/闭馆状态）。删除闭馆时段会触发候补自动补位。</p>
             </div>
         </section>
 
@@ -183,11 +302,23 @@
             {% endif %}
         </section>
 
+        <section>
+            <h2>📋 候补与补位</h2>
+            <div class="link-grid">
+                <a href="/admin/waitlist" role="button">查看候补队列</a>
+                <a href="/admin/fill-logs" role="button" class="secondary">查看补位日志</a>
+            </div>
+            <div class="tip-box" style="margin-top:1rem;">
+                <p>💡 <strong>补位触发时机：</strong>预约取消、标记爽约、提升房间容量、删除闭馆时段时，系统会自动按入队顺序尝试补位，补位前会重新校验额度、闭馆、容量和本人冲突。</p>
+            </div>
+        </section>
+
         <section class="quick-links">
             <a href="/" role="button">返回首页</a>
             <a href="/api/logs" role="button" class="secondary" target="_blank">查看全部日志 (API)</a>
             <a href="/docs" role="button" class="secondary" target="_blank">API 文档</a>
         </section>
+        {% endif %}
     </main>
 
     <footer class="container-fluid footer-bar">

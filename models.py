@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, ForeignKey, Text, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from database import Base
@@ -14,6 +14,7 @@ class Room(Base):
     description = Column(String(500), nullable=True)
 
     bookings = relationship("Booking", back_populates="room")
+    waitlist_entries = relationship("WaitlistEntry", back_populates="room", order_by="WaitlistEntry.created_at")
 
 
 class Booking(Base):
@@ -52,3 +53,37 @@ class ClosedPeriod(Base):
     start_time = Column(String(5), nullable=False)
     end_time = Column(String(5), nullable=False)
     reason = Column(String(200), nullable=True)
+
+
+class WaitlistEntry(Base):
+    __tablename__ = "waitlist_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    user_id = Column(String(100), nullable=False, index=True)
+    user_name = Column(String(100), nullable=False)
+    start_time = Column(DateTime, nullable=False, index=True)
+    end_time = Column(DateTime, nullable=False, index=True)
+    status = Column(String(20), nullable=False, default="waiting")
+    created_at = Column(DateTime, default=datetime.now)
+
+    room = relationship("Room", back_populates="waitlist_entries")
+    fill_logs = relationship("WaitlistFillLog", back_populates="waitlist_entry")
+
+
+class WaitlistFillLog(Base):
+    __tablename__ = "waitlist_fill_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    waitlist_id = Column(Integer, ForeignKey("waitlist_entries.id"), nullable=False)
+    room_id = Column(Integer, nullable=False)
+    user_id = Column(String(100), nullable=False)
+    user_name = Column(String(100), nullable=False)
+    start_time = Column(DateTime, nullable=False)
+    end_time = Column(DateTime, nullable=False)
+    success = Column(Boolean, nullable=False, default=False)
+    reason = Column(Text, nullable=True)
+    booking_id = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    waitlist_entry = relationship("WaitlistEntry", back_populates="fill_logs")

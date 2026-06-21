@@ -24,6 +24,12 @@
         <h1>📋 我的预约记录</h1>
         <p class="muted">欢迎，<strong>{{ user_name }}</strong>（ID: {{ user_id }}）</p>
 
+        {% if request.query_params.get('waitlist_msg') %}
+        <div class="waitlist-msg">
+            <p>{{ request.query_params.get('waitlist_msg') }}</p>
+        </div>
+        {% endif %}
+
         <section>
             <h2>预约列表</h2>
             {% if bookings %}
@@ -88,8 +94,83 @@
             {% endif %}
         </section>
 
+        <section class="waitlist-history-section">
+            <h2>� 我的候补记录</h2>
+            {% if waitlist_entries %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>编号</th>
+                            <th>房间</th>
+                            <th>日期</th>
+                            <th>候补时段</th>
+                            <th>时长</th>
+                            <th>状态</th>
+                            <th>排队位置</th>
+                            <th>加入时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for we in waitlist_entries %}
+                        {% set entry = we.entry %}
+                        <tr>
+                            <td>#{{ entry.id }}</td>
+                            <td><strong>{{ entry.room.name }}</strong></td>
+                            <td>{{ entry.start_time.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ entry.start_time.strftime('%H:%M') }} - {{ entry.end_time.strftime('%H:%M') }}</td>
+                            <td>
+                                {% set delta = (entry.end_time - entry.start_time).total_seconds() / 60 %}
+                                {{ '%d' | format(delta) }} 分钟
+                            </td>
+                            <td>
+                                {% if entry.status == 'waiting' %}
+                                    <span class="status-badge status-waiting">等待中</span>
+                                {% elif entry.status == 'filled' %}
+                                    <span class="status-badge status-open">已补位</span>
+                                {% elif entry.status == 'cancelled' %}
+                                    <span class="status-badge status-cancelled">已取消</span>
+                                {% elif entry.status == 'expired' %}
+                                    <span class="status-badge status-noshow">已过期</span>
+                                {% else %}
+                                    <span class="status-badge">{{ entry.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if we.position %}
+                                    <strong class="position-num">第 {{ we.position }} 位</strong>
+                                {% else %}
+                                    <span class="muted">-</span>
+                                {% endif %}
+                            </td>
+                            <td class="small muted">{{ entry.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>
+                                {% if entry.status == 'waiting' %}
+                                <form method="post" action="/waitlist/cancel/{{ entry.id }}" onsubmit="return confirm('确定要取消这个候补吗？');">
+                                    <input type="hidden" name="user_id" value="{{ user_id }}">
+                                    <input type="hidden" name="user_name" value="{{ user_name }}">
+                                    <button type="submit" class="secondary small-btn">取消候补</button>
+                                </form>
+                                {% else %}
+                                <span class="muted small">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">您还没有候补记录</p>
+                <a href="/book?user_id={{ user_id }}&user_name={{ user_name }}" role="button">去预约房间</a>
+            </div>
+            {% endif %}
+        </section>
+
         <section>
-            <h2>📜 操作日志</h2>
+            <h2>�📜 操作日志</h2>
             {% if logs %}
             <div class="table-container">
                 <table>
@@ -113,6 +194,8 @@
                                     <span class="badge badge-cancel">取消</span>
                                 {% elif log.action == 'no_show' %}
                                     <span class="badge badge-warning">爽约</span>
+                                {% elif log.action == 'auto_filled' %}
+                                    <span class="badge badge-autofill">自动补位</span>
                                 {% else %}
                                     {{ log.action }}
                                 {% endif %}

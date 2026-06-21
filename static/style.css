@@ -567,6 +567,75 @@ article {
     padding: 0;
 }
 
+.status-waiting {
+    background-color: #ebf8ff;
+    color: #2b6cb0;
+}
+
+.waitlist-hint {
+    font-size: 0.7rem;
+    color: #2b6cb0;
+    font-weight: 600;
+}
+
+.slot-item.slot-full {
+    cursor: pointer;
+}
+
+.slot-item.slot-full:hover {
+    background-color: #fed7d7;
+    transform: scale(1.03);
+    box-shadow: 0 2px 8px rgba(229, 62, 62, 0.15);
+}
+
+.waitlist-section {
+    border-left: 4px solid var(--primary-light);
+}
+
+.waitlist-section h3 {
+    color: var(--primary);
+}
+
+.waitlist-btn {
+    background-color: #2b6cb0 !important;
+    border-color: #2b6cb0 !important;
+    color: #fff !important;
+}
+
+.waitlist-btn:hover {
+    background-color: #2c5282 !important;
+    border-color: #2c5282 !important;
+}
+
+.waitlist-msg {
+    background-color: #ebf8ff;
+    border: 1px solid #bee3f8;
+    border-left: 4px solid var(--primary-light);
+    padding: 0.75rem 1rem;
+    border-radius: 0 8px 8px 0;
+    margin-bottom: 1rem;
+}
+
+.waitlist-msg p {
+    margin: 0;
+    color: #2b6cb0;
+    font-weight: 500;
+}
+
+.waitlist-history-section {
+    border-left: 4px solid var(--primary-light);
+}
+
+.position-num {
+    color: #2b6cb0;
+    font-size: 1rem;
+}
+
+.badge-autofill {
+    background-color: #ebf8ff;
+    color: #2b6cb0;
+}
+
 @media (max-width: 640px) {
     .nav-bar ul {
         flex-wrap: wrap;

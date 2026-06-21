@@ -70,7 +70,7 @@
             <h3>2. {{ selected_room.name }} 时段一览（{{ selected_date }}）</h3>
             <div class="slots-legend">
                 <span class="legend-item"><span class="legend-slot slot-available"></span> 可预约</span>
-                <span class="legend-item"><span class="legend-slot slot-full"></span> 已满</span>
+                <span class="legend-item"><span class="legend-slot slot-full"></span> 已满（可候补）</span>
                 <span class="legend-item"><span class="legend-slot slot-closed"></span> 闭馆</span>
             </div>
 
@@ -89,6 +89,7 @@
                             {% endif %}
                         {% elif slot.status == 'full' %}
                             已满 {{ slot.overlap_count }}/{{ slot.capacity }}
+                            <br><span class="waitlist-hint">点击候补</span>
                         {% elif slot.status == 'closed' %}
                             闭馆: {{ slot.closed_reason }}
                         {% endif %}
@@ -138,6 +139,48 @@
                 </div>
             </form>
         </section>
+
+        <section class="waitlist-section">
+            <h3>📋 加入候补</h3>
+            <p class="muted">当所选时段已满时，可以加入候补队列。有空位释放时系统将自动按入队顺序尝试补位。</p>
+            <form method="post" action="/waitlist/join" id="waitlistForm">
+                <input type="hidden" name="user_id" value="{{ user_id }}">
+                <input type="hidden" name="user_name" value="{{ user_name }}">
+                <input type="hidden" name="room_id" value="{{ selected_room.id }}">
+                <input type="hidden" name="selected_date" value="{{ selected_date }}">
+
+                <div class="grid">
+                    <div>
+                        <label for="wl_start_hour">候补开始时间 *</label>
+                        <select id="wl_start_hour" name="start_hour" required>
+                            <option value="">-- 请选择开始时间 --</option>
+                            {% for slot in room_slots %}
+                                {% if slot.status == 'full' %}
+                            <option value="{{ slot.start.strftime('%H:%M') }}">{{ slot.start.strftime('%H:%M') }}</option>
+                                {% endif %}
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label for="wl_duration">候补时长 *（{{ min_booking }}-{{ max_booking }} 分钟，30的倍数）</label>
+                        <select id="wl_duration" name="duration_minutes" required>
+                            <option value="30">30 分钟</option>
+                            <option value="60" selected>60 分钟</option>
+                            <option value="90">90 分钟</option>
+                            <option value="120">120 分钟</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" role="button" class="waitlist-btn">📋 加入候补队列</button>
+                </div>
+            </form>
+
+            <div class="tip-box">
+                <p>💡 <strong>提示：</strong>候补前系统会检查您的每日总时长、本人时间交叉、闭馆区间和房间有效性。补位时也会重新校验，校验不通过则跳过并记录原因。</p>
+            </div>
+        </section>
         {% endif %}
     </main>
 
@@ -150,20 +193,37 @@
             {% endfor %}
         ];
 
+        const fullSlots = [
+            {% for slot in room_slots %}
+                {% if slot.status == 'full' %}
+                    { start: "{{ slot.start.strftime('%H:%M') }}", count: {{ slot.overlap_count }}, capacity: {{ slot.capacity }} },
+                {% endif %}
+            {% endfor %}
+        ];
+
         function selectSlot(startTime, status) {
-            if (status !== 'available') {
-                return;
+            if (status === 'available') {
+                const select = document.getElementById('start_hour');
+                select.innerHTML = '';
+                availableSlots.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s;
+                    opt.textContent = s + ' 开始';
+                    if (s === startTime) opt.selected = true;
+                    select.appendChild(opt);
+                });
+                updatePreview();
+                document.getElementById('bookingForm').scrollIntoView({ behavior: 'smooth' });
+            } else if (status === 'full') {
+                const wlSelect = document.getElementById('wl_start_hour');
+                for (let i = 0; i < wlSelect.options.length; i++) {
+                    if (wlSelect.options[i].value === startTime) {
+                        wlSelect.selectedIndex = i;
+                        break;
+                    }
+                }
+                document.querySelector('.waitlist-section').scrollIntoView({ behavior: 'smooth' });
             }
-            const select = document.getElementById('start_hour');
-            select.innerHTML = '';
-            availableSlots.forEach(s => {
-                const opt = document.createElement('option');
-                opt.value = s;
-                opt.textContent = s + ' 开始';
-                if (s === startTime) opt.selected = true;
-                select.appendChild(opt);
-            });
-            updatePreview();
         }
 
         function updatePreview() {
