@@ -122,6 +122,32 @@ def get_waitlist_position(db: Session, entry: WaitlistEntry) -> int:
     ).count()
 
 
+def is_fully_at_capacity(db: Session, room_id: int, start_time: datetime, end_time: datetime) -> bool:
+    room = db.query(Room).filter(Room.id == room_id, Room.is_active == True).first()
+    if not room:
+        return False
+
+    check_points = []
+    current = start_time
+    while current < end_time:
+        check_points.append(current)
+        current += timedelta(minutes=30)
+    check_points.append(end_time - timedelta(seconds=1))
+
+    for point in check_points:
+        overlapping_count = 0
+        bookings = db.query(Booking).filter(
+            Booking.room_id == room_id,
+            Booking.status == "active",
+        ).all()
+        for b in bookings:
+            if b.start_time <= point < b.end_time:
+                overlapping_count += 1
+        if overlapping_count < room.capacity:
+            return False
+    return True
+
+
 def validate_waitlist_entry(db: Session, user_id: str, room_id: int, start_time: datetime, end_time: datetime, selected_date: str) -> Optional[str]:
     room = db.query(Room).filter(Room.id == room_id, Room.is_active == True).first()
     if not room:
@@ -129,6 +155,9 @@ def validate_waitlist_entry(db: Session, user_id: str, room_id: int, start_time:
 
     if not check_closed_periods(selected_date, start_time, end_time, db):
         return "所选时段与闭馆时段冲突"
+
+    if not is_fully_at_capacity(db, room_id, start_time, end_time):
+        return "所选时段未因容量已满（存在空闲或部分可预约），请直接预约而非加入候补"
 
     cross_booking = check_user_time_cross(db, user_id, start_time, end_time)
     if cross_booking:
@@ -170,6 +199,29 @@ def try_auto_fill(db: Session, room_id: int):
 
         if not fail_reason and not check_room_capacity(db, room_id, start_time, end_time):
             fail_reason = "房间容量已满"
+
+        if not fail_reason:
+            check_points = []
+            cp_current = start_time
+            while cp_current < end_time:
+                check_points.append(cp_current)
+                cp_current += timedelta(minutes=30)
+            check_points.append(end_time - timedelta(seconds=1))
+
+            has_any_overlap = False
+            for point in check_points:
+                active_bookings = db.query(Booking).filter(
+                    Booking.room_id == room_id,
+                    Booking.status == "active",
+                ).all()
+                for b in active_bookings:
+                    if b.start_time <= point < b.end_time:
+                        has_any_overlap = True
+                        break
+                if has_any_overlap:
+                    break
+            if not has_any_overlap:
+                fail_reason = "候补时段完全空闲（由空闲时段误入的候补），无需补位"
 
         if not fail_reason:
             cross_booking = check_user_time_cross(db, entry.user_id, start_time, end_time)
