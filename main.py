@@ -80,6 +80,22 @@ def check_closed_periods(date_str: str, start_time: datetime, end_time: datetime
     return True
 
 
+def check_user_time_cross(db: Session, user_id: str, start_time: datetime, end_time: datetime) -> Optional[Booking]:
+    date_str = start_time.strftime("%Y-%m-%d")
+    start_of_day = datetime.strptime(f"{date_str} 00:00", "%Y-%m-%d %H:%M")
+    end_of_day = datetime.strptime(f"{date_str} 23:59", "%Y-%m-%d %H:%M")
+    bookings = db.query(Booking).filter(
+        Booking.user_id == user_id,
+        Booking.status == "active",
+        Booking.start_time >= start_of_day,
+        Booking.start_time <= end_of_day
+    ).all()
+    for b in bookings:
+        if start_time < b.end_time and end_time > b.start_time:
+            return b
+    return None
+
+
 def get_user_daily_minutes(db: Session, user_id: str, date_str: str) -> int:
     start_of_day = datetime.strptime(f"{date_str} 00:00", "%Y-%m-%d %H:%M")
     end_of_day = datetime.strptime(f"{date_str} 23:59", "%Y-%m-%d %H:%M")
@@ -322,6 +338,16 @@ async def create_booking(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="所选时段房间容量已满"
             )
+
+    cross_booking = check_user_time_cross(db, user_id, start_time, end_time)
+    if cross_booking:
+        cb_start = cross_booking.start_time.strftime("%H:%M")
+        cb_end = cross_booking.end_time.strftime("%H:%M")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"您在同日存在时间交叉的预约（{cross_booking.room.name} {cb_start}-{cb_end}，"
+                   f"与拟预约时段交叉（边界相接除外）"
+        )
 
     current_minutes = get_user_daily_minutes(db, user_id, selected_date)
     if current_minutes + duration_minutes > MAX_DAILY_MINUTES:
