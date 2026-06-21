@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的预约记录 - 图书馆研习室预约系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="container-fluid nav-bar">
+        <ul>
+            <li><strong>📚 图书馆研习室预约系统</strong></li>
+        </ul>
+        <ul>
+            <li><a href="/?user_id={{ user_id }}&user_name={{ user_name }}">首页</a></li>
+            <li><a href="/book?user_id={{ user_id }}&user_name={{ user_name }}">预约</a></li>
+            <li><a href="/history?user_id={{ user_id }}&user_name={{ user_name }}" class="active">我的记录</a></li>
+            <li><a href="/admin">管理后台</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        <h1>📋 我的预约记录</h1>
+        <p class="muted">欢迎，<strong>{{ user_name }}</strong>（ID: {{ user_id }}）</p>
+
+        <section>
+            <h2>预约列表</h2>
+            {% if bookings %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>编号</th>
+                            <th>房间</th>
+                            <th>日期</th>
+                            <th>时段</th>
+                            <th>时长</th>
+                            <th>状态</th>
+                            <th>创建时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for b in bookings %}
+                        <tr>
+                            <td>#{{ b.id }}</td>
+                            <td><strong>{{ b.room.name }}</strong></td>
+                            <td>{{ b.start_time.strftime('%Y-%m-%d') }}</td>
+                            <td>{{ b.start_time.strftime('%H:%M') }} - {{ b.end_time.strftime('%H:%M') }}</td>
+                            <td>
+                                {% set delta = (b.end_time - b.start_time).total_seconds() / 60 %}
+                                {{ '%d' | format(delta) }} 分钟
+                            </td>
+                            <td>
+                                {% if b.status == 'active' %}
+                                    <span class="status-badge status-open">进行中/有效</span>
+                                {% elif b.status == 'cancelled' %}
+                                    <span class="status-badge status-cancelled">已取消</span>
+                                {% elif b.status == 'no_show' %}
+                                    <span class="status-badge status-noshow">爽约/未到</span>
+                                {% else %}
+                                    <span class="status-badge">{{ b.status }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="small muted">{{ b.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+                            <td>
+                                {% if b.status == 'active' %}
+                                <form method="post" action="/book/cancel/{{ b.id }}" onsubmit="return confirm('确定要取消这个预约吗？');">
+                                    <input type="hidden" name="user_id" value="{{ user_id }}">
+                                    <input type="hidden" name="user_name" value="{{ user_name }}">
+                                    <button type="submit" class="secondary small-btn">取消预约</button>
+                                </form>
+                                {% else %}
+                                <span class="muted small">-</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">您还没有任何预约记录</p>
+                <a href="/book?user_id={{ user_id }}&user_name={{ user_name }}" role="button">去预约房间</a>
+            </div>
+            {% endif %}
+        </section>
+
+        <section>
+            <h2>📜 操作日志</h2>
+            {% if logs %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>预约编号</th>
+                            <th>操作</th>
+                            <th>详情</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for log in logs %}
+                        <tr>
+                            <td class="small">{{ log.timestamp.strftime('%Y-%m-%d %H:%M:%S') }}</td>
+                            <td>#{{ log.booking_id }}</td>
+                            <td>
+                                {% if log.action == 'created' %}
+                                    <span class="badge badge-success">创建</span>
+                                {% elif log.action == 'cancelled' %}
+                                    <span class="badge badge-cancel">取消</span>
+                                {% elif log.action == 'no_show' %}
+                                    <span class="badge badge-warning">爽约</span>
+                                {% else %}
+                                    {{ log.action }}
+                                {% endif %}
+                            </td>
+                            <td class="small">{{ log.details }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">暂无操作日志</p>
+            </div>
+            {% endif %}
+        </section>
+
+        <section class="quick-links">
+            <a href="/book?user_id={{ user_id }}&user_name={{ user_name }}" role="button">继续预约</a>
+            <a href="/?user_id={{ user_id }}&user_name={{ user_name }}" role="button" class="secondary">返回首页</a>
+        </section>
+    </main>
+
+    <footer class="container-fluid footer-bar">
+        <p class="muted small text-center">图书馆研习室预约系统 © 2026</p>
+    </footer>
+</body>
+</html>

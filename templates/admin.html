@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - 图书馆研习室预约系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="container-fluid nav-bar">
+        <ul>
+            <li><strong>📚 图书馆研习室预约系统</strong></li>
+        </ul>
+        <ul>
+            <li><a href="/">首页</a></li>
+            <li><a href="/book">预约</a></li>
+            <li><a href="/history">我的记录</a></li>
+            <li><a href="/admin" class="active">🔧 管理后台</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        <h1>🔧 管理后台</h1>
+        <p class="muted">今日日期：<strong>{{ today }}</strong></p>
+
+        <section>
+            <h2>🏢 房间管理</h2>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>房间名</th>
+                            <th>容量</th>
+                            <th>描述</th>
+                            <th>状态</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for room in rooms %}
+                        <tr>
+                            <td>{{ room.id }}</td>
+                            <td><strong>{{ room.name }}</strong></td>
+                            <td>
+                                <form method="post" action="/admin/room/update_capacity/{{ room.id }}" class="form-inline-small">
+                                    <input type="number" name="capacity" value="{{ room.capacity }}" min="1" style="width: 80px; display: inline-block;">
+                                    <button type="submit" class="small-btn">更新</button>
+                                </form>
+                            </td>
+                            <td class="small">{{ room.description }}</td>
+                            <td>
+                                {% if room.is_active %}
+                                    <span class="status-badge status-open">开放</span>
+                                {% else %}
+                                    <span class="status-badge status-cancelled">关闭</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <form method="post" action="/admin/room/toggle/{{ room.id }}">
+                                    <button type="submit" class="secondary small-btn">
+                                        {% if room.is_active %}关闭房间{% else %}开放房间{% endif %}
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+
+            <details>
+                <summary>➕ 添加新房间</summary>
+                <form method="post" action="/admin/room/create" class="form-grid">
+                    <input type="text" name="name" placeholder="房间名称，如 C301" required>
+                    <input type="number" name="capacity" placeholder="容量" min="1" value="4" required>
+                    <input type="text" name="description" placeholder="描述（选填）">
+                    <button type="submit" role="button">添加房间</button>
+                </form>
+            </details>
+        </section>
+
+        <section>
+            <h2>🚫 闭馆时段管理</h2>
+            {% if closed_periods %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>日期</th>
+                            <th>开始时间</th>
+                            <th>结束时间</th>
+                            <th>原因</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cp in closed_periods %}
+                        <tr>
+                            <td>{{ cp.id }}</td>
+                            <td>{{ cp.date }}</td>
+                            <td>{{ cp.start_time }}</td>
+                            <td>{{ cp.end_time }}</td>
+                            <td class="small">{{ cp.reason }}</td>
+                            <td>
+                                <form method="post" action="/admin/closed/delete/{{ cp.id }}" onsubmit="return confirm('确定删除此闭馆时段？');">
+                                    <button type="submit" class="small-btn" style="background: var(--del-color); border-color: var(--del-color);">删除</button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">暂无闭馆时段设置</p>
+            </div>
+            {% endif %}
+
+            <details open>
+                <summary>➕ 添加闭馆时段</summary>
+                <form method="post" action="/admin/closed/create" class="form-grid">
+                    <input type="date" name="date_str" value="{{ today }}" required>
+                    <input type="time" name="start_time" value="12:00" required>
+                    <input type="time" name="end_time" value="13:00" required>
+                    <input type="text" name="reason" placeholder="原因，如 午休、清洁、活动">
+                    <button type="submit" role="button">添加闭馆时段</button>
+                </form>
+            </details>
+
+            <div class="tip-box">
+                <p>💡 <strong>提示：</strong>添加或删除闭馆时段后，读者在刷新预约页面时会立即看到更新的时段可用性（可用/闭馆状态）。</p>
+            </div>
+        </section>
+
+        <section>
+            <h2>📅 今日活跃预约 ({{ today }})</h2>
+            {% if today_bookings %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>编号</th>
+                            <th>房间</th>
+                            <th>预约人</th>
+                            <th>开始</th>
+                            <th>结束</th>
+                            <th>时长</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for b in today_bookings %}
+                        <tr>
+                            <td>#{{ b.id }}</td>
+                            <td><strong>{{ b.room.name }}</strong></td>
+                            <td>{{ b.user_name }} ({{ b.user_id }})</td>
+                            <td>{{ b.start_time.strftime('%H:%M') }}</td>
+                            <td>{{ b.end_time.strftime('%H:%M') }}</td>
+                            <td>
+                                {% set delta = (b.end_time - b.start_time).total_seconds() / 60 %}
+                                {{ '%d' | format(delta) }} 分钟
+                            </td>
+                            <td>
+                                <form method="post" action="/admin/booking/no_show/{{ b.id }}" onsubmit="return confirm('确定将此预约标记为爽约/未到吗？');">
+                                    <button type="submit" class="small-btn" style="background: var(--warn-color); border-color: var(--warn-color);">
+                                        标记爽约
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">今日暂无活跃预约</p>
+            </div>
+            {% endif %}
+        </section>
+
+        <section class="quick-links">
+            <a href="/" role="button">返回首页</a>
+            <a href="/api/logs" role="button" class="secondary" target="_blank">查看全部日志 (API)</a>
+            <a href="/docs" role="button" class="secondary" target="_blank">API 文档</a>
+        </section>
+    </main>
+
+    <footer class="container-fluid footer-bar">
+        <p class="muted small text-center">图书馆研习室预约系统 © 2026 | 管理后台</p>
+    </footer>
+</body>
+</html>

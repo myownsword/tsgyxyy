@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>预约房间 - 图书馆研习室预约系统</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="container-fluid nav-bar">
+        <ul>
+            <li><strong>📚 图书馆研习室预约系统</strong></li>
+        </ul>
+        <ul>
+            <li><a href="/?user_id={{ user_id }}&user_name={{ user_name }}">首页</a></li>
+            <li><a href="/book?user_id={{ user_id }}&user_name={{ user_name }}" class="active">预约</a></li>
+            <li><a href="/history?user_id={{ user_id }}&user_name={{ user_name }}">我的记录</a></li>
+            <li><a href="/admin">管理后台</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        <h1>🔖 预约研习室</h1>
+        <p class="muted">欢迎，<strong>{{ user_name }}</strong>（ID: {{ user_id }}）</p>
+
+        <div class="user-stats">
+            <p>今日已用时长：<strong>{{ user_minutes }}</strong> / {{ max_daily_minutes }} 分钟
+                <progress value="{{ user_minutes }}" max="{{ max_daily_minutes }}"></progress>
+            </p>
+        </div>
+
+        <section>
+            <h3>1. 选择日期和房间</h3>
+            <form method="get" action="/book" class="form-inline">
+                <input type="hidden" name="user_id" value="{{ user_id }}">
+                <input type="hidden" name="user_name" value="{{ user_name }}">
+                <div>
+                    <label for="selected_date">预约日期</label>
+                    <input type="date" id="selected_date" name="selected_date" value="{{ selected_date }}" required>
+                </div>
+                <div>
+                    <label for="room_id">选择房间</label>
+                    <select id="room_id" name="room_id" required>
+                        <option value="">-- 请选择房间 --</option>
+                        {% for room in rooms %}
+                        <option value="{{ room.id }}" {% if selected_room and selected_room.id == room.id %}selected{% endif %}>
+                            {{ room.name }} (容量{{ room.capacity }}人) - {{ room.description }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" role="button">查看时段</button>
+            </form>
+        </section>
+
+        {% if closed_periods %}
+        <section class="closed-section">
+            <h5>⚠️ {{ selected_date }} 闭馆时段</h5>
+            <div class="closed-list">
+                {% for cp in closed_periods %}
+                <span class="badge closed-badge">{{ cp.start_time }} - {{ cp.end_time }} ({{ cp.reason }})</span>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        {% if selected_room %}
+        <section>
+            <h3>2. {{ selected_room.name }} 时段一览（{{ selected_date }}）</h3>
+            <div class="slots-legend">
+                <span class="legend-item"><span class="legend-slot slot-available"></span> 可预约</span>
+                <span class="legend-item"><span class="legend-slot slot-full"></span> 已满</span>
+                <span class="legend-item"><span class="legend-slot slot-closed"></span> 闭馆</span>
+            </div>
+
+            <div class="slots-grid">
+                {% for slot in room_slots %}
+                <div class="slot-item slot-{{ slot.status }}"
+                     data-start="{{ slot.start.strftime('%H:%M') }}"
+                     onclick="selectSlot('{{ slot.start.strftime('%H:%M') }}', '{{ slot.status }}')">
+                    <div class="slot-time">{{ slot.time_label }}</div>
+                    <div class="slot-status-text">
+                        {% if slot.status == 'available' %}
+                            {% if slot.overlap_count > 0 %}
+                                已有 {{ slot.overlap_count }}/{{ slot.capacity }}
+                            {% else %}
+                                可预约
+                            {% endif %}
+                        {% elif slot.status == 'full' %}
+                            已满 {{ slot.overlap_count }}/{{ slot.capacity }}
+                        {% elif slot.status == 'closed' %}
+                            闭馆: {{ slot.closed_reason }}
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section>
+            <h3>3. 提交预约</h3>
+            <form method="post" action="/book/create" id="bookingForm">
+                <input type="hidden" name="user_id" value="{{ user_id }}">
+                <input type="hidden" name="user_name" value="{{ user_name }}">
+                <input type="hidden" name="room_id" value="{{ selected_room.id }}">
+                <input type="hidden" name="selected_date" value="{{ selected_date }}">
+
+                <div class="grid">
+                    <div>
+                        <label for="start_hour">开始时间 *</label>
+                        <select id="start_hour" name="start_hour" required>
+                            <option value="">-- 请先点击上方时段 --</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="duration_minutes">预约时长 *（{{ min_booking }}-{{ max_booking }} 分钟，30的倍数）</label>
+                        <select id="duration_minutes" name="duration_minutes" required>
+                            <option value="30">30 分钟</option>
+                            <option value="60" selected>60 分钟</option>
+                            <option value="90">90 分钟</option>
+                            <option value="120">120 分钟</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="booking-preview" id="bookingPreview" style="display:none;">
+                    <h5>预约预览</h5>
+                    <p>房间：<strong>{{ selected_room.name }}</strong>（容量 {{ selected_room.capacity }} 人）</p>
+                    <p>日期：<strong>{{ selected_date }}</strong></p>
+                    <p>时段：<span id="previewTime">-</span></p>
+                    <p>时长：<span id="previewDuration">-</span></p>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" role="button">✅ 确认预约</button>
+                    <a href="/?user_id={{ user_id }}&user_name={{ user_name }}" role="button" class="secondary">返回首页</a>
+                </div>
+            </form>
+        </section>
+        {% endif %}
+    </main>
+
+    <script>
+        const availableSlots = [
+            {% for slot in room_slots %}
+                {% if slot.status == 'available' %}
+                    "{{ slot.start.strftime('%H:%M') }}",
+                {% endif %}
+            {% endfor %}
+        ];
+
+        function selectSlot(startTime, status) {
+            if (status !== 'available') {
+                return;
+            }
+            const select = document.getElementById('start_hour');
+            select.innerHTML = '';
+            availableSlots.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s;
+                opt.textContent = s + ' 开始';
+                if (s === startTime) opt.selected = true;
+                select.appendChild(opt);
+            });
+            updatePreview();
+        }
+
+        function updatePreview() {
+            const startSelect = document.getElementById('start_hour');
+            const durationSelect = document.getElementById('duration_minutes');
+            const preview = document.getElementById('bookingPreview');
+            const previewTime = document.getElementById('previewTime');
+            const previewDuration = document.getElementById('previewDuration');
+
+            if (startSelect.value) {
+                preview.style.display = 'block';
+                const start = startSelect.value;
+                const duration = parseInt(durationSelect.value);
+                const [h, m] = start.split(':').map(Number);
+                const endMin = h * 60 + m + duration;
+                const endH = Math.floor(endMin / 60);
+                const endM = endMin % 60;
+                const endStr = String(endH).padStart(2, '0') + ':' + String(endM).padStart(2, '0');
+                previewTime.innerHTML = `<strong>${start} - ${endStr}</strong>`;
+                previewDuration.innerHTML = `<strong>${duration}</strong> 分钟`;
+            }
+        }
+
+        document.getElementById('duration_minutes').addEventListener('change', updatePreview);
+
+        document.getElementById('bookingForm').addEventListener('submit', function(e) {
+            const startSelect = document.getElementById('start_hour');
+            if (!startSelect.value) {
+                alert('请先选择可用的开始时段');
+                e.preventDefault();
+            }
+        });
+    </script>
+
+    <footer class="container-fluid footer-bar">
+        <p class="muted small text-center">图书馆研习室预约系统 © 2026 | 预约时长 {{ min_booking }}-{{ max_booking }} 分钟 | 单人每日上限 {{ max_daily_minutes }} 分钟</p>
+    </footer>
+</body>
+</html>

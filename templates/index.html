@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图书馆研习室预约系统 - 首页</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@1/css/pico.min.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="container-fluid nav-bar">
+        <ul>
+            <li><strong>📚 图书馆研习室预约系统</strong></li>
+        </ul>
+        <ul>
+            <li><a href="/?user_id={{ user_id }}&user_name={{ user_name }}" class="active">首页</a></li>
+            <li><a href="/book?user_id={{ user_id }}&user_name={{ user_name }}">预约</a></li>
+            <li><a href="/history?user_id={{ user_id }}&user_name={{ user_name }}">我的记录</a></li>
+            <li><a href="/admin">管理后台</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        <section class="header-section">
+            <h1>图书馆研习室预约系统</h1>
+            <p class="muted">欢迎，<strong>{{ user_name }}</strong>（ID: {{ user_id }}） | 今日日期：{{ today_str }}</p>
+            <div class="user-stats">
+                <p>今日已用时长：<strong>{{ user_minutes }}</strong> / {{ max_daily_minutes }} 分钟
+                    <progress value="{{ user_minutes }}" max="{{ max_daily_minutes }}"></progress>
+                </p>
+            </div>
+        </section>
+
+        {% if closed_periods %}
+        <section class="closed-section">
+            <h3>⚠️ 今日闭馆时段</h3>
+            <div class="closed-list">
+                {% for cp in closed_periods %}
+                <span class="badge closed-badge">{{ cp.start_time }} - {{ cp.end_time }} ({{ cp.reason }})</span>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        <section class="rooms-section">
+            <h2>🏢 当前开放房间 & 剩余配额</h2>
+            <div class="room-grid">
+                {% for rs in room_status %}
+                <article class="room-card {% if rs.is_open %}card-open{% else %}card-full{% endif %}">
+                    <header>
+                        <h3>{{ rs.room.name }}</h3>
+                        {% if rs.is_open %}
+                        <span class="status-badge status-open">开放中</span>
+                        {% else %}
+                        <span class="status-badge status-full">已满</span>
+                        {% endif %}
+                    </header>
+                    <div class="room-info">
+                        <p>容量：<strong>{{ rs.room.capacity }}</strong> 人</p>
+                        <p>剩余配额：<strong class="{% if rs.remaining > 0 %}text-success{% else %}text-danger{% endif %}">{{ rs.remaining }}</strong> / {{ rs.room.capacity }}</p>
+                        <p class="muted small">{{ rs.room.description }}</p>
+                        <p class="small muted">今日预约总数：{{ rs.total_today }}</p>
+                    </div>
+                    <footer>
+                        <a href="/book?user_id={{ user_id }}&user_name={{ user_name }}&room_id={{ rs.room.id }}&selected_date={{ today_str }}" role="button" class="secondary">
+                            查看时段
+                        </a>
+                    </footer>
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+
+        <section class="upcoming-section">
+            <h2>⏰ 即将开始的预约（3小时内）</h2>
+            {% if upcoming_bookings %}
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>房间</th>
+                            <th>预约人</th>
+                            <th>开始时间</th>
+                            <th>结束时间</th>
+                            <th>时长</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for b in upcoming_bookings %}
+                        <tr>
+                            <td><strong>{{ b.room.name }}</strong></td>
+                            <td>{{ b.user_name }}</td>
+                            <td>{{ b.start_time.strftime('%H:%M') }}</td>
+                            <td>{{ b.end_time.strftime('%H:%M') }}</td>
+                            <td>
+                                {% set delta = (b.end_time - b.start_time).total_seconds() / 60 %}
+                                {{ '%d' | format(delta) }} 分钟
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <p class="muted">暂无即将开始的预约</p>
+            </div>
+            {% endif %}
+        </section>
+
+        <section class="quick-links">
+            <h2>🔗 快捷操作</h2>
+            <div class="link-grid">
+                <a href="/book?user_id={{ user_id }}&user_name={{ user_name }}" role="button">立即预约房间</a>
+                <a href="/history?user_id={{ user_id }}&user_name={{ user_name }}" role="button" class="secondary">查看我的历史</a>
+                <a href="/admin" role="button" class="secondary">管理后台</a>
+            </div>
+        </section>
+    </main>
+
+    <footer class="container-fluid footer-bar">
+        <p class="muted small text-center">图书馆研习室预约系统 © 2026 | 预约时长 {{ min_booking | default(30) }}-{{ max_booking | default(120) }} 分钟 | 单人每日上限 {{ max_daily_minutes }} 分钟</p>
+    </footer>
+</body>
+</html>
